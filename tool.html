@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frame extractor</title>
+<style>
+  :root{
+    --bg:#1E1B4B; --panel:#27235f; --line:#3d3890; --text:#eceaff; --muted:#a9a4dd; --accent:#ffd166; --ok:#7fe3b0; --err:#ff8a8a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.5}
+  main{max-width:720px;margin:0 auto;padding:32px 20px 60px}
+  h1{font-size:1.6rem;margin:0 0 4px}
+  p.lead{color:var(--muted);margin:0 0 24px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:16px}
+  label{display:block;font-size:.9rem;color:var(--muted);margin-bottom:6px}
+  input[type=file]{width:100%;padding:10px;border:1px dashed var(--line);border-radius:8px;background:transparent;color:var(--text)}
+  .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:14px}
+  input[type=number]{width:100%;padding:9px 10px;border-radius:8px;border:1px solid var(--line);background:#1b1844;color:var(--text);font-size:1rem}
+  button{font:inherit;font-weight:600;padding:12px 20px;border-radius:10px;border:0;background:var(--accent);color:#1E1B4B;cursor:pointer;margin-top:18px}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button:focus-visible,input:focus-visible{outline:3px solid #fff;outline-offset:2px}
+  video{width:100%;max-height:300px;border-radius:8px;background:#000;display:none;margin-top:14px}
+  .bar{height:10px;background:#1b1844;border-radius:99px;overflow:hidden;margin-top:16px}
+  .bar>i{display:block;height:100%;width:0;background:var(--ok);transition:width .1s}
+  #status{margin-top:10px;font-size:.95rem;min-height:1.4em}
+  .ok{color:var(--ok)} .err{color:var(--err)}
+  .thumbs{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;margin-top:14px}
+  .thumbs img{width:100%;border-radius:4px;display:block}
+  ol{padding-left:20px;color:var(--muted);margin:8px 0 0}
+  code{background:#1b1844;padding:1px 6px;border-radius:5px;color:var(--text)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Frame extractor</h1>
+  <p class="lead">Video chunein, frames.zip download karein, aur zip ko extract karke <code>frames</code> folder mein daal dein.</p>
+
+  <section class="card">
+    <label for="file">1. Video (character.mp4)</label>
+    <input id="file" type="file" accept="video/*">
+    <video id="vid" muted playsinline preload="auto" controls></video>
+    <div id="info" style="margin-top:10px;color:var(--muted);font-size:.9rem"></div>
+  </section>
+
+  <section class="card">
+    <label>2. Settings</label>
+    <div class="row">
+      <div><label for="count">Frames</label><input id="count" type="number" value="64" min="2" max="200"></div>
+      <div><label for="start">Start (sec)</label><input id="start" type="number" value="0" min="0" step="0.05"></div>
+      <div><label for="end">End (sec)</label><input id="end" type="number" value="0" min="0" step="0.05"></div>
+      <div><label for="width">Width (px)</label><input id="width" type="number" value="720" min="200" max="1920" step="10"></div>
+      <div><label for="quality">Quality (1-100)</label><input id="quality" type="number" value="82" min="30" max="100"></div>
+    </div>
+    <button id="go" disabled>Frames nikalain</button>
+    <div class="bar"><i id="prog"></i></div>
+    <div id="status"></div>
+    <div class="thumbs" id="thumbs"></div>
+  </section>
+
+  <section class="card">
+    <label>Download ke baad</label>
+    <ol>
+      <li><code>frames.zip</code> ko extract karein</li>
+      <li>Andar ki <code>frames</code> folder ki saari files (<code>center.webp</code>, <code>frame_00.webp</code> se <code>frame_63.webp</code>) apne project ke <code>frames</code> folder mein daalein</li>
+      <li>Purani ghalat files (naam mein <code>...</code> wali) delete kar dein</li>
+    </ol>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const vid = $('vid'), go = $('go'), statusEl = $('status');
+let objectUrl = null;
+
+function setStatus(msg, cls){ statusEl.textContent = msg; statusEl.className = cls || ''; }
+
+$('file').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if(!f) return;
+  if(objectUrl) URL.revokeObjectURL(objectUrl);
+  objectUrl = URL.createObjectURL(f);
+  vid.src = objectUrl;
+  vid.style.display = 'block';
+  go.disabled = true;
+  setStatus('Video load ho rahi hai...');
+});
+
+vid.addEventListener('loadedmetadata', () => {
+  const d = vid.duration;
+  $('start').value = 0;
+  $('end').value = d.toFixed(2);
+  $('end').max = d;
+  $('info').textContent = `Length: ${d.toFixed(2)} sec, size: ${vid.videoWidth}x${vid.videoHeight}`;
+  go.disabled = false;
+  setStatus('Tayyar hai.', 'ok');
+});
+vid.addEventListener('error', () => setStatus('Video load nahi hui. Chrome ya Edge mein mp4 file chunein.', 'err'));
+
+function seekTo(t){
+  return new Promise((res, rej) => {
+    const ok = () => { vid.removeEventListener('error', bad); res(); };
+    const bad = () => { vid.removeEventListener('seeked', ok); rej(new Error('seek fail')); };
+    vid.addEventListener('seeked', ok, { once:true });
+    vid.addEventListener('error', bad, { once:true });
+    vid.currentTime = t;
+  });
+}
+
+// Minimal "store" zip writer (no compression), so no outside library is needed.
+const crcTable = (() => {
+  const t = new Uint32Array(256);
+  for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c = c&1 ? 0xEDB88320 ^ (c>>>1) : c>>>1; t[n]=c>>>0; }
+  return t;
+})();
+function crc32(buf){
+  let c = 0xFFFFFFFF;
+  for(let i=0;i<buf.length;i++) c = crcTable[(c ^ buf[i]) & 0xFF] ^ (c>>>8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function makeZip(files){ // files: [{name, data:Uint8Array}]
+  const enc = new TextEncoder();
+  const parts = [], central = [];
+  let offset = 0;
+  for(const f of files){
+    const name = enc.encode(f.name);
+    const crc = crc32(f.data);
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0,0x04034b50,true); lh.setUint16(4,20,true); lh.setUint16(6,0x0800,true);
+    lh.setUint16(8,0,true); lh.setUint16(10,0,true); lh.setUint16(12,33,true);
+    lh.setUint32(14,crc,true); lh.setUint32(18,f.data.length,true); lh.setUint32(22,f.data.length,true);
+    lh.setUint16(26,name.length,true); lh.setUint16(28,0,true);
+    parts.push(new Uint8Array(lh.buffer), name, f.data);
+
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0,0x02014b50,true); ch.setUint16(4,20,true); ch.setUint16(6,20,true); ch.setUint16(8,0x0800,true);
+    ch.setUint16(10,0,true); ch.setUint16(12,0,true); ch.setUint16(14,33,true);
+    ch.setUint32(16,crc,true); ch.setUint32(20,f.data.length,true); ch.setUint32(24,f.data.length,true);
+    ch.setUint16(28,name.length,true); ch.setUint32(42,offset,true);
+    central.push(new Uint8Array(ch.buffer), name);
+
+    offset += 30 + name.length + f.data.length;
+  }
+  let cdSize = 0; central.forEach(p => cdSize += p.length);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0,0x06054b50,true);
+  end.setUint16(8,files.length,true); end.setUint16(10,files.length,true);
+  end.setUint32(12,cdSize,true); end.setUint32(16,offset,true);
+  return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type:'application/zip' });
+}
+
+function canvasBlob(canvas, q){
+  return new Promise(res => canvas.toBlob(res, 'image/webp', q));
+}
+
+go.addEventListener('click', async () => {
+  const count = Math.max(2, Math.min(200, parseInt($('count').value) || 64));
+  const start = Math.max(0, parseFloat($('start').value) || 0);
+  const end = Math.min(vid.duration, parseFloat($('end').value) || vid.duration);
+  const width = parseInt($('width').value) || 720;
+  const q = Math.max(30, Math.min(100, parseInt($('quality').value) || 82)) / 100;
+  if(end <= start){ setStatus('End time Start se bada hona chahiye.', 'err'); return; }
+
+  go.disabled = true;
+  $('thumbs').innerHTML = '';
+  vid.pause();
+
+  const height = Math.round(width * vid.videoHeight / vid.videoWidth);
+  const canvas = document.createElement('canvas');
+  canvas.width = width; canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  const files = [];
+  const pad = n => String(n).padStart(2, '0');
+
+  try{
+    // frames are spread evenly from start to end; the last frame sits just before `end`
+    const span = end - start;
+    for(let i=0;i<count;i++){
+      const t = Math.min(start + (span * i) / count, vid.duration - 0.01);
+      await seekTo(t);
+      ctx.drawImage(vid, 0, 0, width, height);
+      const blob = await canvasBlob(canvas, q);
+      if(!blob || blob.type !== 'image/webp') throw new Error('Is browser mein webp save nahi ho raha. Chrome ya Edge use karein.');
+      const data = new Uint8Array(await blob.arrayBuffer());
+      files.push({ name:`frames/frame_${pad(i)}.webp`, data });
+      if(i === 0) files.push({ name:'frames/center.webp', data });
+
+      if(i % Math.ceil(count/16) === 0){
+        const img = new Image(); img.src = URL.createObjectURL(blob);
+        $('thumbs').appendChild(img);
+      }
+      $('prog').style.width = ((i+1)/count*100) + '%';
+      setStatus(`Frame ${i+1} / ${count}`);
+    }
+
+    setStatus('Zip ban rahi hai...');
+    const zip = makeZip(files);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(zip);
+    a.download = 'frames.zip';
+    document.body.appendChild(a); a.click(); a.remove();
+    const mb = (zip.size/1048576).toFixed(1);
+    setStatus(`Ho gaya. frames.zip (${mb} MB) download ho gayi, ${count} frames + center.webp.`, 'ok');
+  }catch(err){
+    setStatus('Masla aaya: ' + err.message, 'err');
+  }finally{
+    go.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
